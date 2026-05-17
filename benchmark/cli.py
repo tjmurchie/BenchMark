@@ -298,7 +298,9 @@ def cmd_run(args):
     proc = subprocess.Popen(tool_args)
     ps_proc = psutil.Process(proc.pid)
 
-    while proc.poll() is None:
+    # Monitor without calling proc.poll() so the zombie isn't reaped until we
+    # have read its final CPU times. We detect exit via psutil status instead.
+    while True:
         try:
             all_procs = [ps_proc] + ps_proc.children(recursive=True)
             mem = sum(p.memory_info().rss for p in all_procs) / (1024 * 1024)
@@ -310,7 +312,7 @@ def cmd_run(args):
                 max_threads = threads
             if len(all_procs) > max_procs:
                 max_procs = len(all_procs)
-            # Accumulate CPU and I/O while process is alive
+            # Capture CPU and I/O on every sample
             cpu = ps_proc.cpu_times()
             last_cpu_user = cpu.user
             last_cpu_sys  = cpu.system
@@ -320,11 +322,20 @@ def cmd_run(args):
                 last_disk_w = io.write_bytes
             except (psutil.AccessDenied, AttributeError):
                 pass
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Detect zombie: process exited but not yet reaped — read final CPU here
+            if ps_proc.status() == psutil.STATUS_ZOMBIE:
+                final = ps_proc.cpu_times()
+                last_cpu_user = final.user
+                last_cpu_sys  = final.system
+                break
+        except psutil.NoSuchProcess:
+            break   # process already reaped by OS (race — use last captured values)
+        except psutil.AccessDenied:
             pass
-        time.sleep(0.5)
+        time.sleep(0.2)     # shorter interval for better resolution on fast steps
 
     end = time.time()
+    proc.wait()             # reap the zombie now
     exit_code = proc.returncode
 
     cpu_user = last_cpu_user
