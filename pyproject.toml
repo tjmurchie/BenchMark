@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "benchmark-monitor"
+version = "0.1.0"
+description = "Pipeline-aware resource monitoring for ancient DNA and metagenomic classification tools"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+dependencies = ["psutil>=5.9.0"]
+authors = [
+    { name = "Tyler J. Murchie", email = "tyler.murchie@hakai.org" }
+]
+keywords = ["benchmarking", "ancient DNA", "metagenomics", "resource monitoring"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.scripts]
+BenchMark = "benchmark.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["benchmark*"]

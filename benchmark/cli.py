@@ -421,16 +421,87 @@ def cmd_analyse(args):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="BenchMark",
-        description="Metagenomic classifier benchmarking tool",
+        description=(
+            "Pipeline-aware resource monitoring for ancient DNA and metagenomic "
+            "classification tools.\n\n"
+            "BenchMark attaches to a screen session, tracks CPU time, memory, "
+            "disk I/O, and wall-clock time per pipeline step (pausing the timer "
+            "automatically when the session is idle), and outputs a per-step CSV "
+            "suitable for cross-tool comparison and publication figures."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  BenchMark go --screen kr2_run --tool Kraken2 --dataset calculus_sim
+WORKFLOW OVERVIEW
+-----------------
+  1. Start your screen session:
+       screen -S fillet_run
+
+  2. Start monitoring (returns to shell immediately):
+       BenchMark go --screen fillet_run --tool Fillet --dataset calculus_100k
+
+  3. Label steps before running them in screen (optional but recommended):
+       BenchMark mark "adapter_trim"
+       BenchMark mark "alignment"
+
+  4. Check progress:
+       BenchMark status
+
+  5. Stop and write CSV:
+       BenchMark stop
+
+  6. Combine runs from multiple tools:
+       BenchMark merge fillet.csv kraken2.csv megan7.csv -o comparison.csv
+
+  7. Generate publication plots:
+       BenchMark analyse comparison.csv --output-dir ./plots
+
+STEP DETECTION
+--------------
+  Steps are detected automatically: when a command starts in screen a new step
+  begins; when the shell goes idle (only bash/zsh running, CPU <0.5%) for 3 s
+  the step ends. No changes to your pipeline scripts are required.
+
+  To label steps, call:  BenchMark mark "step_name"  BEFORE running each step.
+  To rename retroactively: BenchMark rename 1 "adapter_trim"
+
+WHAT IS MEASURED (per step + TOTAL summary row)
+------------------------------------------------
+  wall_time_s     Active wall time (idle time excluded)
+  cpu_user_s      User-mode CPU time, all threads summed
+  cpu_system_s    Kernel-mode CPU time, all threads summed
+  cpu_total_s     Total CPU time (user + system)
+  cpu_efficiency  cpu_total / wall_time  (>1 = multi-threaded)
+  peak_mem_mb     Maximum RSS during the step
+  avg_mem_mb      Mean RSS during the step
+  max_threads     Maximum thread count
+  disk_read_mb    Total bytes read from disk
+  disk_write_mb   Total bytes written to disk
+
+SESSION STATE
+-------------
+  Active sessions and daemon state are stored in ~/.benchmark/sessions/
+  Daemon logs:  ~/.benchmark/sessions/<session>/daemon.log
+
+ACCURACY
+--------
+  Validated against GNU time (-v) across 5 workload types (N=3 replicates).
+  For workloads >2 s: mean deviation 2.7% wall, 2.4% CPU, 1.0% memory.
+  Absolute overhead ~0.06 s per step (0.003% error on a 30-min step).
+  Full validation: docs/supplementary_validation.md
+  Reproduce: python3 tests/validation_study.py --reps 3
+
+EXAMPLES
+--------
+  BenchMark go --screen kr2_run --tool Kraken2 --dataset calculus_sim \\
+               --notes "db=k2_standard_2024" --output ~/bench/
   BenchMark mark "database_build"
-  BenchMark stop
-  BenchMark merge kr2.csv fillet.csv megan.csv -o combined.csv
-  BenchMark analyse combined.csv --output-dir ./plots
-  BenchMark run --tool Kraken2 --dataset test -- kraken2 --db /db reads.fastq
+  BenchMark stop --screen kr2_run
+  BenchMark merge kr2.csv fillet.csv megan.csv -o combined.csv \\
+             --pipeline-version v1.0
+  BenchMark analyse combined.csv --output-dir ./plots \\
+             --title "Ancient DNA Classifier Comparison"
+  BenchMark run --tool Kraken2 --dataset test -- \\
+             kraken2 --db /db --output out.tsv reads.fastq.gz
 """,
     )
     parser.add_argument("--version", action="version", version=f"BenchMark {__version__}")

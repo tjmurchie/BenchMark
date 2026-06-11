@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use BenchMark in your research, please cite it using the metadata below."
+type: software
+title: "BenchMark"
+abstract: >
+  BenchMark is a pipeline-aware resource monitoring tool for ancient DNA and
+  metagenomic classification workflows. It attaches to GNU Screen terminal
+  sessions, tracks CPU time, memory, disk I/O, and wall-clock time per pipeline
+  step with automatic idle detection, and generates per-step CSVs and
+  publication-quality comparison figures across multiple tools.
+authors:
+  - family-names: "Murchie"
+    given-names: "Tyler J."
+    affiliation: "Hakai Institute"
+    orcid: ""
+version: "0.1.0"
+date-released: "2026-05-17"
+license: MIT
+repository-code: "https://github.com/tymurchie/BenchMark"
+keywords:
+  - ancient DNA
+  - metagenomics
+  - benchmarking
+  - bioinformatics
+  - resource monitoring
+  - classification

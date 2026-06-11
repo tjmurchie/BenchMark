@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  unit-tests:
+    name: Unit & integration tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install "psutil>=5.9.0" pytest
+
+      - name: Unit tests (26 tests)
+        run: python -m pytest tests/test_core.py -v
+
+      - name: Integration tests
+        run: python tests/simulate_workflow.py
