@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![Tests](https://github.com/tymurchie/BenchMark/actions/workflows/tests.yml/badge.svg)](https://github.com/tymurchie/BenchMark/actions/workflows/tests.yml)
+[![Tests](https://github.com/tjmurchie/BenchMark/actions/workflows/tests.yml/badge.svg)](https://github.com/tjmurchie/BenchMark/actions/workflows/tests.yml)
 
 **Pipeline-aware resource monitoring for ancient DNA and metagenomic classification tools.**
 
@@ -58,7 +58,7 @@ BenchMark analyse comparison.csv \
 ## Installation
 
 ```bash
-git clone https://github.com/tymurchie/BenchMark ~/software/BenchMark
+git clone https://github.com/tjmurchie/BenchMark ~/software/BenchMark
 cd ~/software/BenchMark && bash install.sh && source ~/.bashrc
 ```
 

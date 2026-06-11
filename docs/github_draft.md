@@ -49,14 +49,14 @@ Features:
 ```markdown
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![Tests](https://github.com/tymurchie/BenchMark/actions/workflows/tests.yml/badge.svg)](https://github.com/tymurchie/BenchMark/actions/workflows/tests.yml)
+[![Tests](https://github.com/tjmurchie/BenchMark/actions/workflows/tests.yml/badge.svg)](https://github.com/tjmurchie/BenchMark/actions/workflows/tests.yml)
 ```
 
 ---
 
 ## Pre-push checklist
 
-- [ ] `git remote add origin https://github.com/tymurchie/BenchMark.git`
+- [ ] `git remote add origin https://github.com/tjmurchie/BenchMark.git`
 - [ ] Create the repo on GitHub (public, no auto-init — repo already has history)
 - [ ] `git push -u origin master`
 - [ ] Set the "About" description and topics above in the GitHub UI
