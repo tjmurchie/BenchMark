@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install "psutil>=5.9.0" pytest
+        run: pip install "psutil>=5.9.0" pytest && pip install -e .
 
       - name: Unit tests (26 tests)
         run: python -m pytest tests/test_core.py -v
