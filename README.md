@@ -345,15 +345,6 @@ python3 tests/validation_study.py --reps 3 --output-csv validation_results.csv
 
 ---
 
-## Adding TP/FP/FN accuracy data
-
-Once your classifier accuracy scripts produce precision/recall/F1 scores, add them
-as additional columns to the merged CSV. The R analysis script automatically
-includes any extra numeric columns it finds in the heatmap and summary table.
-No changes to BenchMark are required.
-
----
-
 ## Running tests
 
 ```bash
@@ -371,7 +362,6 @@ python3 tests/validation_study.py --reps 3
 
 ## Planned additions
 
-- TP/FP/TN/FN integration (classification accuracy alongside resource metrics)
 - Multi-replicate averaging with error bars in R plots
 - Optional GPU monitoring via `nvidia-smi`
 - nf-core/Snakemake workflow integration

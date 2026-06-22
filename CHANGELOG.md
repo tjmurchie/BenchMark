@@ -22,6 +22,5 @@ Initial release.
 - Full supplementary validation: `docs/supplementary_validation.md`
 
 ### Planned
-- TP/FP/TN/FN classification accuracy integration
 - Multi-replicate error bars in R plots
 - GPU monitoring
