@@ -115,6 +115,8 @@ def cmd_go(args):
         "--dataset", args.dataset,
         "--output-dir", output_dir,
         "--notes", args.notes or "",
+        "--idle-timeout", str(getattr(args, "idle_timeout", 30)),
+        "--orphan-timeout", str(getattr(args, "orphan_timeout", 15)),
     ]
 
     log_path = os.path.join(session_dir, "daemon.log")
@@ -134,12 +136,18 @@ def cmd_go(args):
             break
         time.sleep(0.1)
 
+    idle_to = getattr(args, "idle_timeout", 30)
+    orphan_to = getattr(args, "orphan_timeout", 15)
+    idle_str = f"{idle_to:.0f} min" if idle_to > 0 else "disabled"
+    orphan_str = f"{orphan_to:.0f} min" if orphan_to > 0 else "disabled"
     print(f"\nBenchMark monitoring started")
-    print(f"  Session : {session_name}")
-    print(f"  Tool    : {args.tool}")
-    print(f"  Dataset : {args.dataset}")
-    print(f"  Output  : {output_dir}")
-    print(f"  Log     : {log_path}")
+    print(f"  Session      : {session_name}")
+    print(f"  Tool         : {args.tool}")
+    print(f"  Dataset      : {args.dataset}")
+    print(f"  Output       : {output_dir}")
+    print(f"  Log          : {log_path}")
+    print(f"  Idle timeout : {idle_str} (auto-exit if inactive)")
+    print(f"  Orphan timeo : {orphan_str} (auto-exit if screen gone)")
     print(f"\nWaiting for screen session '{session_name}'...")
     print("Steps are detected automatically when programs start/stop running.")
     print(f"Label the next step with:  BenchMark mark \"step description\"")
@@ -521,6 +529,10 @@ EXAMPLES
                       help="Directory for CSV output (default: current directory)")
     p_go.add_argument("--notes", "-n", metavar="TEXT",
                       help="Free-text notes (e.g. database version, parameters)")
+    p_go.add_argument("--idle-timeout", type=float, default=30, metavar="MINUTES",
+                      help="Exit after N minutes of continuous inactivity (0=never, default 30)")
+    p_go.add_argument("--orphan-timeout", type=float, default=15, metavar="MINUTES",
+                      help="Exit after screen session gone for N minutes (0=never, default 15)")
     p_go.set_defaults(func=cmd_go)
 
     # ── stop ──

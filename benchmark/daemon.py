@@ -28,12 +28,14 @@ from benchmark.process_utils import (
 from benchmark.state import StateManager
 
 # ── Tuning constants ────────────────────────────────────────────────────
-SAMPLE_INTERVAL_S = 1.0     # how often to sample
-IDLE_DEBOUNCE_S = 3.0       # quiet time before declaring idle
-ACTIVE_DEBOUNCE_S = 0.5     # activity time before declaring active
-IDLE_CPU_THRESH = 0.5       # % CPU threshold for "idle"
-STATE_FLUSH_S = 15.0        # max seconds between state flushes
-SCREEN_WAIT_TIMEOUT_S = 300 # wait up to 5 min for screen session
+SAMPLE_INTERVAL_S = 1.0       # how often to sample
+IDLE_DEBOUNCE_S = 3.0         # quiet time before declaring idle
+ACTIVE_DEBOUNCE_S = 0.5       # activity time before declaring active
+IDLE_CPU_THRESH = 0.5         # % CPU threshold for "idle"
+STATE_FLUSH_S = 15.0          # max seconds between state flushes
+SCREEN_WAIT_TIMEOUT_S = 300   # wait up to 5 min for screen session
+DEFAULT_IDLE_TIMEOUT_M = 30   # exit after this many minutes of continuous idle
+DEFAULT_ORPHAN_TIMEOUT_M = 15 # exit after screen disappears for this long
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,12 +46,23 @@ log = logging.getLogger("benchmark.daemon")
 
 
 class MonitorDaemon:
-    def __init__(self, session_name: str, state: StateManager):
+    def __init__(
+        self,
+        session_name: str,
+        state: StateManager,
+        idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_M * 60,
+        orphan_timeout_s: float = DEFAULT_ORPHAN_TIMEOUT_M * 60,
+    ):
         self.session_name = session_name
         self.state = state
         self.screen_pid: Optional[int] = None
         self._running = True
         self._mark_requested = False
+
+        # Timeout configuration
+        self._idle_timeout_s = idle_timeout_s
+        self._orphan_timeout_s = orphan_timeout_s
+        self._screen_lost_since: Optional[float] = None  # when screen disappeared
 
         # Active/idle tracking
         self._is_idle = True
@@ -214,9 +227,23 @@ class MonitorDaemon:
                 # Re-discover screen PID if lost
                 if not self.screen_pid or not _pid_alive(self.screen_pid):
                     if not self._find_screen():
-                        log.warning("Screen session lost, waiting...")
+                        now = time.time()
+                        if self._screen_lost_since is None:
+                            self._screen_lost_since = now
+                            log.warning(
+                                f"Screen session lost — will exit in "
+                                f"{self._orphan_timeout_s / 60:.0f} min if not found"
+                            )
+                        elif now - self._screen_lost_since >= self._orphan_timeout_s:
+                            log.warning(
+                                f"Screen session '{self.session_name}' gone for "
+                                f"{(now - self._screen_lost_since) / 60:.0f} min — exiting"
+                            )
+                            self._running = False
                         time.sleep(2.0)
                         continue
+                    else:
+                        self._screen_lost_since = None  # session found again
 
                 processes = get_descendants(self.screen_pid)
                 if not processes:
@@ -266,6 +293,19 @@ class MonitorDaemon:
                     self._apply_mark(now, snap)
                     self._mark_requested = False
 
+                # Idle timeout: exit if continuously idle for too long
+                if (
+                    self._is_idle
+                    and self._idle_start is not None
+                    and self._idle_timeout_s > 0
+                    and now - self._idle_start >= self._idle_timeout_s
+                ):
+                    log.warning(
+                        f"Idle for {(now - self._idle_start) / 60:.0f} min "
+                        f"(timeout={self._idle_timeout_s / 60:.0f} min) — exiting"
+                    )
+                    self._running = False
+
                 # Periodic state flush
                 if now - self._last_flush >= STATE_FLUSH_S:
                     self.state.flush()
@@ -309,6 +349,20 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--notes", default="")
+    parser.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=DEFAULT_IDLE_TIMEOUT_M,
+        metavar="MINUTES",
+        help=f"Exit after this many minutes of continuous inactivity (0=never, default {DEFAULT_IDLE_TIMEOUT_M})",
+    )
+    parser.add_argument(
+        "--orphan-timeout",
+        type=float,
+        default=DEFAULT_ORPHAN_TIMEOUT_M,
+        metavar="MINUTES",
+        help=f"Exit after screen session gone for this long (0=never, default {DEFAULT_ORPHAN_TIMEOUT_M})",
+    )
     args = parser.parse_args()
 
     # Redirect all logging to daemon.log in the session dir
@@ -328,7 +382,12 @@ def main():
     )
     state.write_pid(os.getpid())
 
-    daemon = MonitorDaemon(args.session_name, state)
+    daemon = MonitorDaemon(
+        args.session_name,
+        state,
+        idle_timeout_s=args.idle_timeout * 60,
+        orphan_timeout_s=args.orphan_timeout * 60,
+    )
     daemon.run()
 
 
