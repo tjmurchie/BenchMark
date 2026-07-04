@@ -552,7 +552,8 @@ EXAMPLES
     p_go.add_argument("--notes", "-n", metavar="TEXT",
                       help="Free-text notes (e.g. database version, parameters)")
     p_go.add_argument("--idle-timeout", type=float, default=30, metavar="MINUTES",
-                      help="Exit after N minutes of continuous inactivity (0=never, default 30)")
+                      help="Exit after N minutes idle, but only once the first step has run "
+                           "(setup time is never limited); 0=never, default 30")
     p_go.add_argument("--orphan-timeout", type=float, default=3, metavar="MINUTES",
                       help="Exit + auto-write CSV this long after the screen is killed (0=never, default 3)")
     p_go.set_defaults(func=cmd_go)

@@ -33,7 +33,8 @@ IDLE_DEBOUNCE_S = 3.0         # quiet time before declaring idle
 ACTIVE_DEBOUNCE_S = 0.5       # activity time before declaring active
 IDLE_CPU_THRESH = 0.5         # % CPU threshold for "idle"
 STATE_FLUSH_S = 15.0          # max seconds between state flushes
-SCREEN_WAIT_TIMEOUT_S = 300   # wait up to 5 min for screen session
+SCREEN_WAIT_TIMEOUT_S = 7200  # wait up to 2 h for the screen session to appear (generous
+                              # setup grace; with go's auto-create the screen is there at once)
 DEFAULT_IDLE_TIMEOUT_M = 30   # exit after this many minutes of continuous idle
 DEFAULT_ORPHAN_TIMEOUT_M = 3  # exit (and auto-write CSV) this long after the screen is killed
 
@@ -69,6 +70,9 @@ class MonitorDaemon:
 
         # Active/idle tracking
         self._is_idle = True
+        # The idle timeout must not fire before the pipeline has actually started —
+        # otherwise a fresh monitor would auto-exit while you're still setting up.
+        self._ever_active = False
         self._idle_candidate_since: Optional[float] = None
         self._active_candidate_since: Optional[float] = None
 
@@ -271,6 +275,7 @@ class MonitorDaemon:
                         self._active_candidate_since = now
                     elif now - self._active_candidate_since >= ACTIVE_DEBOUNCE_S:
                         self._is_idle = False
+                        self._ever_active = True   # first real command has run
                         self._begin_step(now, snap)
                         self._active_candidate_since = None
                         self._idle_candidate_since = None
@@ -297,9 +302,11 @@ class MonitorDaemon:
                     self._apply_mark(now, snap)
                     self._mark_requested = False
 
-                # Idle timeout: exit if continuously idle for too long
+                # Idle timeout: exit if continuously idle for too long — but only once
+                # the pipeline has actually started, so pre-launch setup time is unlimited.
                 if (
                     self._is_idle
+                    and self._ever_active
                     and self._idle_start is not None
                     and self._idle_timeout_s > 0
                     and now - self._idle_start >= self._idle_timeout_s

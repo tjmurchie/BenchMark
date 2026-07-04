@@ -125,6 +125,39 @@ comparison PDF + PNGs. For a fair comparison, run every method on the **same mac
 with the **same thread budget** — `wall_time_s` is the headline speed, `cpu_total_s`
 the thread-robust cross-check.
 
+### Setup grace — no rush to launch
+
+After `BenchMark go` you have plenty of time to get organised before running anything:
+
+- The daemon waits up to **2 hours** for the screen to appear (irrelevant when `go`
+  auto-creates it, but generous if you point it at a screen you'll make later).
+- The `--idle-timeout` does **not** start counting until your **first command runs**,
+  so a freshly-started monitor never auto-exits while you're still setting up — no
+  matter how long you take. (After the first step, `--idle-timeout` behaves normally;
+  for a hand-run pipeline with long gaps *between* steps, still pass `--idle-timeout 0`.)
+
+### Restarting a stopped run
+
+A monitor can end for several reasons: you ran `BenchMark stop`; the screen was killed
+(auto-finalize); the `--idle-timeout` fired; or the machine rebooted / the daemon
+crashed. Check which sessions are alive with `BenchMark list` (`●` running / `○` stopped).
+
+To restart, just run `BenchMark go ...` again with the same details:
+
+```bash
+BenchMark go --screen megan_run --tool MEGAN-pipeline --dataset garg_up_bac_euk_damage \
+  --idle-timeout 0 --output ~/results/benchmark/
+```
+
+Important: each `go` is a **fresh session → a fresh CSV** — there is no resume-in-place,
+and timings do not carry over. So:
+- If it stopped **after finishing**, you already have the CSV; nothing to do.
+- If it stopped **mid-run** and you need clean end-to-end timings, re-run the whole
+  method from the start (a fair TOTAL must be one contiguous run). Delete or ignore the
+  partial CSV, or keep it and pick the complete one at `merge` time.
+- If the **screen** is still alive but only the daemon died, `go` re-attaches to that
+  same screen; if the screen is gone too, `go` creates a new one for you.
+
 ---
 
 ## Installation

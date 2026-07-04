@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.1 (2026-07-03)
+
+### Changed
+- Generous startup: the daemon now waits up to **2 hours** (was 5 min) for the screen
+  session to appear, so there's no rush to launch your pipeline.
+- The `--idle-timeout` no longer fires **before the first command runs** — a freshly
+  started monitor will never auto-exit while you're still setting up. It applies only
+  after the pipeline has actually started (i.e. between/after steps).
+
+### Docs
+- README: added a "Restarting a stopped run" section and clarified the startup grace.
+
 ## v0.2.0 (2026-07-03)
 
 ### Added
