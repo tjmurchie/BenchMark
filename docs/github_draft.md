@@ -2,7 +2,7 @@
 
 ## Repository description (GitHub "About" one-liner)
 
-> Pipeline-aware CPU, memory, and I/O monitoring for ancient DNA and metagenomic classification workflows — per-step CSVs and publication-quality comparison plots.
+> Pipeline-aware CPU, memory, and I/O monitoring for ancient DNA and metagenomic classification workflows — per-step CSVs and comparison plots.
 
 (160 characters — fits the GitHub About field.)
 
@@ -35,7 +35,7 @@ Features:
 - Single-command wrapping via `BenchMark run -- COMMAND`
 - CSV merge across multiple tool runs with derived columns (cpu_efficiency,
   total_io_mb, mem_per_cpu_mb_per_s)
-- 8 ggplot2 publication-quality comparison figures + PDF via `BenchMark analyse`
+- 8 ggplot2 comparison figures + PDF via `BenchMark analyse`
 - Validated against GNU time (/usr/bin/time -v): wall 2.7%, CPU 2.4%, mem 1.0%
   mean deviation for steps > 2 s (N=3 replicates, 5 workloads)
 - 26 unit tests + integration test suite

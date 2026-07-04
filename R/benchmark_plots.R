@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# BenchMark -publication-quality comparison plots
+# BenchMark -comparison plots
 # Usage: Rscript benchmark_plots.R <input.csv> [output_dir] [title]
 
 suppressWarnings(suppressPackageStartupMessages({
@@ -57,7 +57,7 @@ if (n_tools <= 8) {
   pal <- colorRampPalette(brewer.pal(8, "Set2"))(n_tools)
 }
 
-# Shared ggplot theme for publication figures
+# Shared ggplot theme for comparison figures
 pub_theme <- theme_bw(base_size = 11) +
   theme(
     panel.grid.minor  = element_blank(),

@@ -104,6 +104,19 @@ def cmd_go(args):
             print("Use 'BenchMark stop' to stop it first, or choose a different --screen name.")
             sys.exit(1)
 
+    # --resume: find the most recent prior session for this screen name (before we
+    # create the new session dir, so the glob can't pick the fresh one).
+    resume_from = None
+    if getattr(args, "resume", False):
+        resume_from = _latest_prior_session(session_name)
+        if resume_from:
+            print(f"⚠  --resume: carrying over completed steps from {resume_from}")
+            print("   This makes the run NON-CONTIGUOUS — the last pre-resume step may be")
+            print("   incomplete and conditions can differ across the gap. The CSV is stamped")
+            print("   in its 'notes' column. Prefer a clean restart for paper-grade timings.")
+        else:
+            print(f"⚠  --resume: no prior session found for '{session_name}' — starting fresh.")
+
     session_dir = _make_session_dir(session_name)
     register_session(session_name, session_dir)
 
@@ -132,6 +145,8 @@ def cmd_go(args):
         "--idle-timeout", str(getattr(args, "idle_timeout", 30)),
         "--orphan-timeout", str(getattr(args, "orphan_timeout", 3)),
     ]
+    if resume_from:
+        cmd += ["--resume-from", resume_from]
 
     log_path = os.path.join(session_dir, "daemon.log")
     with open(log_path, "w") as logf:
@@ -179,6 +194,14 @@ def cmd_go(args):
 def _auto_session_name():
     from datetime import date
     return f"benchmark_{date.today().strftime('%Y%m%d')}"
+
+
+def _latest_prior_session(session_name):
+    """Return the most recent session dir for this screen name (for --resume), else None."""
+    import glob
+    from benchmark.state import SESSIONS_DIR
+    dirs = sorted(glob.glob(os.path.join(SESSIONS_DIR, f"{session_name}_*")))
+    return dirs[-1] if dirs else None
 
 
 def cmd_stop(args):
@@ -415,7 +438,7 @@ def cmd_merge(args):
 
 
 def cmd_analyse(args):
-    """Run R analysis and generate publication-quality plots."""
+    """Run R analysis and generate plots."""
     if not os.path.isfile(args.input):
         print(f"Error: input file not found: {args.input}")
         sys.exit(1)
@@ -455,7 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
             "BenchMark attaches to a screen session, tracks CPU time, memory, "
             "disk I/O, and wall-clock time per pipeline step (pausing the timer "
             "automatically when the session is idle), and outputs a per-step CSV "
-            "suitable for cross-tool comparison and publication figures."
+            "suitable for cross-tool comparison and figures."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -482,7 +505,7 @@ WORKFLOW OVERVIEW
   6. Combine runs from multiple tools:
        BenchMark merge fillet.csv kraken2.csv megan7.csv -o comparison.csv
 
-  7. Generate publication plots:
+  7. Generate comparison plots:
        BenchMark analyse comparison.csv --output-dir ./plots
 
 STEP DETECTION
@@ -551,6 +574,10 @@ EXAMPLES
                       help="Directory for CSV output (default: current directory)")
     p_go.add_argument("--notes", "-n", metavar="TEXT",
                       help="Free-text notes (e.g. database version, parameters)")
+    p_go.add_argument("--resume", action="store_true",
+                      help="Continue the most recent prior session for this --screen: carry its "
+                           "completed steps into this run. NON-CONTIGUOUS (see caveats); the CSV "
+                           "is stamped in 'notes'. Prefer a clean restart for paper-grade timings.")
     p_go.add_argument("--idle-timeout", type=float, default=30, metavar="MINUTES",
                       help="Exit after N minutes idle, but only once the first step has run "
                            "(setup time is never limited); 0=never, default 30")

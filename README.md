@@ -10,7 +10,7 @@ BenchMark attaches to a running `screen` terminal session and tracks CPU time,
 memory, disk I/O, and wall-clock time across every step of a pipeline — pausing
 the timer automatically when the session is idle between commands. Output is a
 per-step CSV that can be merged across multiple tool runs and rendered into
-publication-quality comparison plots.
+comparison plots.
 
 Developed at the [Hakai Institute](https://www.hakai.org/) by Tyler Murchie.
 
@@ -44,7 +44,7 @@ BenchMark stop --screen fillet_run
 BenchMark merge fillet.csv kraken2.csv megan7.csv holi.csv \
   -o comparison.csv --pipeline-version v1.0
 
-# 6. Generate publication plots
+# 6. Generate comparison plots
 BenchMark analyse comparison.csv \
   --output-dir ./plots \
   --title "Ancient DNA Classifier Benchmark"
@@ -149,14 +149,29 @@ BenchMark go --screen megan_run --tool MEGAN-pipeline --dataset garg_up_bac_euk_
   --idle-timeout 0 --output ~/results/benchmark/
 ```
 
-Important: each `go` is a **fresh session → a fresh CSV** — there is no resume-in-place,
-and timings do not carry over. So:
+By default each `go` is a **fresh session → a fresh CSV** — timings do not carry over. So:
 - If it stopped **after finishing**, you already have the CSV; nothing to do.
 - If it stopped **mid-run** and you need clean end-to-end timings, re-run the whole
   method from the start (a fair TOTAL must be one contiguous run). Delete or ignore the
   partial CSV, or keep it and pick the complete one at `merge` time.
 - If the **screen** is still alive but only the daemon died, `go` re-attaches to that
   same screen; if the screen is gone too, `go` creates a new one for you.
+
+**Opt-in `--resume` (odd cases only).** If re-running is genuinely wasteful — e.g. a
+multi-day pipeline that died at a late stage — carry the prior session's completed
+steps into a new run:
+
+```bash
+BenchMark go --screen megan_run --tool MEGAN-pipeline --dataset garg_up_bac_euk_damage \
+  --resume --idle-timeout 0 --output ~/results/benchmark/
+```
+
+`--resume` finds the most recent prior session for that `--screen`, prepends its
+completed steps, and continues. It prints a warning and **stamps every CSV row's
+`notes` column** as a NON-CONTIGUOUS run, because (a) the last pre-resume step may have
+been incomplete when it stopped — risking a double-count if you re-run it — and (b)
+conditions can differ across the gap. For paper-grade timings prefer a clean restart;
+use `--resume` only when redoing the early stages costs more than those caveats.
 
 ---
 
@@ -359,7 +374,7 @@ Runs the R analysis script and generates:
 | `08_io_footprint.png` | Disk read/write per tool |
 | `benchmark_summary_table.csv` | Clean summary table for supplementary materials |
 
-All plots use ggplot2 at 300 DPI with clean, publication-appropriate styling.
+All plots use ggplot2 at 300 DPI with clean, consistent styling.
 
 ```bash
 BenchMark analyse comparison.csv \

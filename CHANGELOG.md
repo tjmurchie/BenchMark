@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0 (2026-07-03)
+
+### Added
+- `BenchMark go --resume` (opt-in): continue the most recent prior session for the
+  given `--screen`, carrying its completed steps into a new run. Prints a warning and
+  **stamps every CSV row's `notes`** as a NON-CONTIGUOUS run (the last pre-resume step
+  may be incomplete; conditions can differ across the gap). For odd cases only — a
+  clean restart is still recommended for paper-grade timings.
+
+### Changed
+- Documentation reworded to drop "publication-quality" — plots are described plainly
+  as comparison/analysis plots (GitHub description, README, CLI help, R comments).
+
 ## v0.2.1 (2026-07-03)
 
 ### Changed

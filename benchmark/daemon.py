@@ -391,6 +391,10 @@ def main():
         metavar="MINUTES",
         help=f"Exit after screen session gone for this long (0=never, default {DEFAULT_ORPHAN_TIMEOUT_M})",
     )
+    parser.add_argument(
+        "--resume-from", default=None,
+        help="Prior session dir to carry completed steps over from (non-contiguous run).",
+    )
     args = parser.parse_args()
 
     # Redirect all logging to daemon.log in the session dir
@@ -408,6 +412,17 @@ def main():
         notes=args.notes,
         system_info=get_system_info(),
     )
+    if args.resume_from:
+        try:
+            prior = StateManager(args.resume_from)
+            prior.load()
+            prior_steps = [s for s in prior.data.get("steps", []) if s.get("status") == "done"]
+            stamp = ("[RESUMED — NON-CONTIGUOUS run: steps span a gap, the last pre-resume "
+                     "step may be incomplete, and conditions may differ across the gap] ")
+            state.seed_from_prior(prior_steps, args.resume_from, stamp)
+            log.warning(f"RESUMED from {args.resume_from}: carried over {len(prior_steps)} completed step(s).")
+        except Exception as exc:
+            log.error(f"--resume-from failed ({exc}) — starting fresh.")
     state.write_pid(os.getpid())
 
     daemon = MonitorDaemon(

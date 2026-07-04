@@ -42,6 +42,20 @@ class TestStateManager(unittest.TestCase):
         self.assertEqual(self.sm.data["dataset"], "sim_dataset")
         self.assertEqual(self.sm.data["status"], "initializing")
 
+    def test_seed_from_prior_resume(self):
+        prior = {"step_num": 1, "step_name": "blastn", "status": "done",
+                 "wall_time_s": 10.0, "cpu_user_s": 8.0, "cpu_system_s": 1.0,
+                 "cpu_total_s": 9.0, "peak_mem_mb": 100.0, "avg_mem_mb": 80.0,
+                 "max_threads": 4, "peak_processes": 2,
+                 "disk_read_mb": 5.0, "disk_write_mb": 2.0}
+        self.sm.seed_from_prior([prior], "/prior/dir", "[RESUMED] ")
+        self.sm.load()
+        self.assertTrue(self.sm.data["resumed"])
+        self.assertEqual(self.sm.data["resumed_from"], "/prior/dir")
+        self.assertEqual(self.sm.data["current_step_num"], 1)      # continues numbering
+        self.assertEqual(self.sm.data["steps"][0]["step_name"], "blastn")  # carried over
+        self.assertTrue(self.sm.data["notes"].startswith("[RESUMED] "))    # CSV stamp
+
     def test_set_running(self):
         self.sm.set_running(12345)
         self.sm.load()

@@ -209,7 +209,7 @@ measurements for these tools are dominated by sustained database-in-memory acces
 patterns (Kraken2 database: ~50–200 GB; MEGAN7 database: ~200 GB), for which
 BenchMark showed near-zero deviation from the reference (0.1%; Table S3, Memory:
 database load). We therefore conclude that BenchMark provides measurement accuracy
-sufficient for comparative benchmarking in publication-quality analysis.
+sufficient for comparative benchmarking in analysis.
 
 ---
 

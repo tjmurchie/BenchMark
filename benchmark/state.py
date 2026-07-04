@@ -122,6 +122,17 @@ class StateManager:
         self._state["total_idle_s"] = total_idle_s
         self.flush()
 
+    def seed_from_prior(self, prior_steps: List[dict], prior_ref: str, notes_stamp: str):
+        """Resume support: prepend a previous session's completed steps and stamp this
+        run as non-contiguous (the stamp propagates to every CSV row's `notes`)."""
+        self._state["steps"] = list(prior_steps) + self._state["steps"]
+        if prior_steps:
+            self._state["current_step_num"] = max(s.get("step_num", 0) for s in prior_steps)
+        self._state["resumed"] = True
+        self._state["resumed_from"] = prior_ref
+        self._state["notes"] = notes_stamp + (self._state.get("notes") or "")
+        self.flush()
+
     # ------------------------------------------------------------------
     # Step management
     # ------------------------------------------------------------------
