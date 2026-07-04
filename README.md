@@ -22,28 +22,25 @@ Developed at the [Hakai Institute](https://www.hakai.org/) by Tyler Murchie.
 # Install
 cd ~/software/BenchMark && bash install.sh && source ~/.bashrc
 
-# 1. Start your screen session
-screen -S fillet_run
-
-# 2. Start monitoring (runs in background immediately)
+# 1. Start monitoring — this AUTO-CREATES a detached screen named 'fillet_run'
 BenchMark go \
-  --screen fillet_run \
-  --tool   Fillet \
+  --screen  fillet_run \
+  --tool    Fillet \
   --dataset calculus_sim_100k \
-  --output ~/results/benchmark/
+  --idle-timeout 0 \
+  --output  ~/results/benchmark/
 
-# 3. Label each step before running it in screen (optional but recommended)
-BenchMark mark "adapter_trim"
-# → run trimming in screen ...
-BenchMark mark "alignment"
-# → run alignment in screen ...
-BenchMark mark "classification"
-# → run classification in screen ...
+# 2. Attach to that screen, run your pipeline, detach (Ctrl-A D) whenever
+screen -r fillet_run
+#   ... run your commands; BenchMark mark "step" before each if you want labels ...
 
-# 4. Stop and write CSV
-BenchMark stop
+# 3. See what's being monitored
+BenchMark list
 
-# 5. Combine runs from multiple tools
+# 4. Finish: stop it yourself, OR just kill the screen (CSV auto-writes either way)
+BenchMark stop --screen fillet_run
+
+# 5. Combine runs from multiple tools (one CSV each)
 BenchMark merge fillet.csv kraken2.csv megan7.csv holi.csv \
   -o comparison.csv --pipeline-version v1.0
 
@@ -52,6 +49,81 @@ BenchMark analyse comparison.csv \
   --output-dir ./plots \
   --title "Ancient DNA Classifier Benchmark"
 ```
+
+> `go` no longer requires you to create the screen first — it makes one for you.
+> If a screen with that name already exists, it monitors it instead.
+
+---
+
+## Benchmarking a classifier — step by step
+
+This is the exact recipe for timing one classifier method (Fillet, Kraken2, a
+`eager → filtering → blastn → MEGAN` pipeline, HOLI, …) on one dataset. Run it
+once per method; each produces one CSV that you later `merge` and `analyse` for
+the comparison. Everything below is copy-paste — no scripting required.
+
+**1. Start the monitor (it creates the screen for you).**
+```bash
+BenchMark go \
+  --screen  megan_run \                 # screen name — also the run's handle in `list`/`stop`
+  --tool    MEGAN-pipeline \            # ID: which method this run is (shown in plots)
+  --dataset garg_up_bac_euk_damage \    # ID: which dataset this run used
+  --notes   "eager→filter→blastn→MEGAN, 40 threads, nt 2026-06-11" \  # free text for your records
+  --idle-timeout 0 \                    # never auto-stop on idle — you'll run steps by hand over hours/days
+  --output  ~/results/benchmark/        # where the CSV is written
+```
+`--tool` and `--dataset` are just **labels** used to name the CSV and group/colour
+the comparison — pick consistent names across methods (e.g. always `--dataset
+garg_up_bac_euk_damage`). `--idle-timeout 0` is important for a hand-run pipeline:
+without it the daemon would exit after 30 min of you not typing. Orphan detection
+stays on (default 3 min) so that **killing the screen finalizes the run** (see step 4).
+
+**2. Attach and run your pipeline by hand.**
+```bash
+screen -r megan_run
+```
+Inside the screen, optionally label each stage right before you launch it, then run it:
+```bash
+BenchMark mark "eager";      eager ...           # (mark is optional; without it steps are auto-numbered)
+BenchMark mark "filtering";  filter ...
+BenchMark mark "blastn";     blastn ...
+BenchMark mark "megan";      megan ...
+```
+Detach anytime with **Ctrl-A then D** — the daemon keeps timing. Idle time between
+steps (you thinking, or away entirely) is **not** counted; only active run time is.
+Re-attach later with `screen -r megan_run` and continue. Steps are detected
+automatically, so even without `mark` you still capture every command.
+
+**3. Check on it from anywhere.**
+```bash
+BenchMark list        # every active monitor: name, tool/dataset, steps done, ● running / ○ stopped
+```
+Live daemon log if you want detail: `~/.benchmark/sessions/<screen>_<timestamp>/daemon.log`.
+
+**4. Finish — two ways, both write the CSV:**
+```bash
+BenchMark stop --screen megan_run     # explicit: prints a summary and writes the CSV
+```
+…or just **kill/exit the screen** (`exit` inside it, or `screen -S megan_run -X quit`) —
+the daemon notices within ~3 min and auto-writes the CSV. No `stop` needed.
+
+**5. The key file.** Each run writes one CSV:
+```
+~/results/benchmark/benchmark_<tool>_<dataset>_<timestamp>.csv
+```
+That's the file to keep. It has one row per detected step plus a **TOTAL summary
+row** (`is_summary=True`) with correct end-to-end `wall_time_s` (active time, idle
+excluded) and `cpu_total_s`. Collect one CSV per method, then:
+```bash
+BenchMark merge fillet.csv kraken2.csv megan.csv holi.csv \
+  -o comparison.csv --pipeline-version v1.0
+BenchMark analyse comparison.csv --output-dir ./plots \
+  --title "aDNA classifier benchmark — garg_up_bac_euk_damage"
+```
+`merge` combines them (adding `cpu_efficiency`, `total_io_mb`); `analyse` renders the
+comparison PDF + PNGs. For a fair comparison, run every method on the **same machine**
+with the **same thread budget** — `wall_time_s` is the headline speed, `cpu_total_s`
+the thread-robust cross-check.
 
 ---
 
@@ -91,15 +163,21 @@ Required:
   --dataset, -d NAME    Dataset name (e.g. "calculus_sim_100k")
 
 Optional:
-  --screen, -s NAME     Screen session to monitor
-                        (auto-detected if only one session is active)
+  --screen, -s NAME     Screen session to monitor. Auto-CREATED (detached) if it
+                        isn't running yet; monitored as-is if it already exists.
+                        Auto-detected if only one session is active and no name given.
   --output, -o DIR      Directory for CSV output (default: current directory)
   --notes, -n TEXT      Free-text notes — database version, parameters, etc.
+  --idle-timeout MIN    Auto-exit after MIN minutes of continuous idle (default 30;
+                        use 0 to disable — recommended for long, hand-run pipelines).
+  --orphan-timeout MIN  Auto-exit + write the CSV MIN minutes after the screen is
+                        killed/exits (default 3; 0 = never).
 ```
 
 Starts a background daemon that monitors the named screen session and returns
-immediately. The daemon waits up to 5 minutes for the screen session to appear
-if it hasn't started yet.
+immediately. It auto-creates the screen if needed, waits up to 5 minutes for the
+session to appear, and — when the screen is later killed — auto-writes the CSV
+without needing `BenchMark stop`.
 
 **Step detection is automatic.** When a command starts running in screen, a new
 step begins. When it finishes and the shell returns to the prompt (idle for 3 s),
@@ -165,16 +243,23 @@ BenchMark stop [--screen NAME] [--output DIR]
 Sends stop signal to the daemon, waits for it to finalise, prints a summary
 table, and writes the CSV to the output directory.
 
+You don't strictly need `stop`: if you simply kill/exit the monitored screen, the
+daemon auto-finalises and writes the CSV on its own (within `--orphan-timeout`,
+default 3 min). Use `stop` when you want an immediate finish and the printed summary.
+
 ---
 
-### `BenchMark status` — show active sessions
+### `BenchMark status` / `BenchMark list` — show active sessions
 
 ```
-BenchMark status
+BenchMark status      # (BenchMark list is an identical alias)
 ```
 
-Shows all currently monitored sessions with tool name, dataset, step count,
-and daemon health.
+Lists all monitored sessions with tool name, dataset, step count, and daemon
+health (`●` running / `○` stopped). Handy when several benchmarks run at once —
+find a name here, then `BenchMark stop --screen NAME` to finalise a specific one.
+Note this lists **BenchMark** sessions only (ones started with `go`); a plain
+`screen` you didn't attach BenchMark to won't appear — use `screen -ls` for those.
 
 ---
 
@@ -291,6 +376,16 @@ is excluded from all measurements.
 The 3-second debounce prevents brief pauses within a tool (e.g., between
 index-building and classification phases) from being split into separate steps
 unless the tool truly returns to the shell prompt.
+
+**Pausing the timer vs. exiting.** Idle *pauses* the step timer (idle time is never
+counted). Separately, the daemon *exits* on two timeouts:
+- `--idle-timeout` (default 30 min): if idle continuously for this long, assume the
+  run is over and exit. For a long, hand-run pipeline with gaps, set `--idle-timeout 0`.
+- `--orphan-timeout` (default 3 min): if the monitored screen is killed/exits, exit
+  this long after and **auto-write the CSV** (so killing the screen finishes the run).
+
+On an idle-timeout or orphan-timeout exit the CSV is written automatically; a manual
+`BenchMark stop` also writes it (and prints the summary).
 
 ---
 

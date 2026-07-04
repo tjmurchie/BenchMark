@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0 (2026-07-03)
+
+### Added
+- `BenchMark go --screen NAME` now **auto-creates** the screen session (detached) if
+  it isn't already running — you just `screen -r NAME`, run your pipeline, and detach.
+  If the named screen already exists it is monitored as before (backward compatible).
+- **Auto-finalize on screen exit**: when the monitored screen is killed/exits, the
+  daemon detects it and writes the CSV itself — no `BenchMark stop` required. Governed
+  by `--orphan-timeout` (default now 3 min; `0` = never).
+- `BenchMark list` — alias for `status`; lists every active monitor by name, tool,
+  dataset, step count, and daemon health (handy when several run at once).
+
+### Changed
+- Default `--orphan-timeout` lowered from 15 → 3 minutes so a killed screen finalizes
+  promptly. `--idle-timeout` default unchanged (30 min; use `0` to disable for
+  long, mostly-idle interactive runs).
+- `go` output now prints the attach command and clarifies stop / auto-finalize behavior.
+
 ## v0.1.0 (2026-05-17)
 
 Initial release.

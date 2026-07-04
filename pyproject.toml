@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "benchmark-monitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pipeline-aware resource monitoring for ancient DNA and metagenomic classification tools"
 readme = "README.md"
 license = { file = "LICENSE" }

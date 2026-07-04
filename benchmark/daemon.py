@@ -35,7 +35,7 @@ IDLE_CPU_THRESH = 0.5         # % CPU threshold for "idle"
 STATE_FLUSH_S = 15.0          # max seconds between state flushes
 SCREEN_WAIT_TIMEOUT_S = 300   # wait up to 5 min for screen session
 DEFAULT_IDLE_TIMEOUT_M = 30   # exit after this many minutes of continuous idle
-DEFAULT_ORPHAN_TIMEOUT_M = 15 # exit after screen disappears for this long
+DEFAULT_ORPHAN_TIMEOUT_M = 3  # exit (and auto-write CSV) this long after the screen is killed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,6 +58,9 @@ class MonitorDaemon:
         self.screen_pid: Optional[int] = None
         self._running = True
         self._mark_requested = False
+        # Set when the daemon exits on its own (idle/orphan timeout) rather than via an
+        # explicit `BenchMark stop` (SIGTERM) — triggers auto-writing the CSV on shutdown.
+        self._auto_finalize = False
 
         # Timeout configuration
         self._idle_timeout_s = idle_timeout_s
@@ -240,6 +243,7 @@ class MonitorDaemon:
                                 f"{(now - self._screen_lost_since) / 60:.0f} min — exiting"
                             )
                             self._running = False
+                            self._auto_finalize = True   # screen killed → write the CSV
                         time.sleep(2.0)
                         continue
                     else:
@@ -305,6 +309,7 @@ class MonitorDaemon:
                         f"(timeout={self._idle_timeout_s / 60:.0f} min) — exiting"
                     )
                     self._running = False
+                    self._auto_finalize = True   # idle-timeout exit → write the CSV
 
                 # Periodic state flush
                 if now - self._last_flush >= STATE_FLUSH_S:
@@ -329,6 +334,22 @@ class MonitorDaemon:
             self._total_idle_s += time.time() - self._idle_start
 
         self.state.finalize(total_idle_s=self._total_idle_s)
+        # When we exited on our own (idle/orphan timeout, e.g. the run's screen was
+        # killed) there's no `BenchMark stop` to write the CSV — so do it here.
+        if self._auto_finalize:
+            try:
+                from datetime import datetime
+                from benchmark.reporter import generate_csv
+                st = self.state.data
+                outdir = st.get("output_dir") or os.getcwd()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                tool = str(st.get("tool_name", "tool")).replace(" ", "_")
+                ds = str(st.get("dataset", "dataset")).replace(" ", "_")
+                csv_path = os.path.join(outdir, f"benchmark_{tool}_{ds}_{ts}.csv")
+                n = generate_csv(st, csv_path)
+                log.info(f"Auto-finalized CSV: {csv_path} ({n} rows)")
+            except Exception as exc:
+                log.error(f"Auto-finalize CSV failed: {exc}")
         self.state.remove_pid()
         log.info("Daemon exited cleanly")
 

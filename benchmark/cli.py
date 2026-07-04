@@ -107,6 +107,20 @@ def cmd_go(args):
     session_dir = _make_session_dir(session_name)
     register_session(session_name, session_dir)
 
+    # Convenience: if the user named a --screen that isn't running yet, create it
+    # (detached) so they don't have to make it first — they just `screen -r NAME`,
+    # run their pipeline, and Ctrl-A D out; the daemon keeps monitoring.
+    created_screen = False
+    if args.screen:
+        from benchmark.process_utils import list_screen_sessions
+        live = {name for _, name in list_screen_sessions()}
+        if session_name not in live:
+            try:
+                subprocess.run(["screen", "-dmS", session_name], check=True, timeout=10)
+                created_screen = True
+            except Exception as exc:
+                print(f"Warning: could not auto-create screen '{session_name}': {exc}")
+
     cmd = [
         sys.executable, DAEMON_SCRIPT,
         "--session-name", session_name,
@@ -116,7 +130,7 @@ def cmd_go(args):
         "--output-dir", output_dir,
         "--notes", args.notes or "",
         "--idle-timeout", str(getattr(args, "idle_timeout", 30)),
-        "--orphan-timeout", str(getattr(args, "orphan_timeout", 15)),
+        "--orphan-timeout", str(getattr(args, "orphan_timeout", 3)),
     ]
 
     log_path = os.path.join(session_dir, "daemon.log")
@@ -137,7 +151,7 @@ def cmd_go(args):
         time.sleep(0.1)
 
     idle_to = getattr(args, "idle_timeout", 30)
-    orphan_to = getattr(args, "orphan_timeout", 15)
+    orphan_to = getattr(args, "orphan_timeout", 3)
     idle_str = f"{idle_to:.0f} min" if idle_to > 0 else "disabled"
     orphan_str = f"{orphan_to:.0f} min" if orphan_to > 0 else "disabled"
     print(f"\nBenchMark monitoring started")
@@ -151,8 +165,14 @@ def cmd_go(args):
     print(f"\nWaiting for screen session '{session_name}'...")
     print("Steps are detected automatically when programs start/stop running.")
     print(f"Label the next step with:  BenchMark mark \"step description\"")
-    print(f"Stop with:                 BenchMark stop")
-    if not args.screen:
+    print(f"Stop with:                 BenchMark stop  (or just kill the screen — CSV auto-writes)")
+    if created_screen:
+        print(f"\nCreated screen '{session_name}'.  Attach and run your pipeline:")
+        print(f"    screen -r {session_name}")
+        print(f"Detach with Ctrl-A D (daemon keeps running); killing the screen auto-finalizes the CSV.")
+    elif args.screen:
+        print(f"\nAttach to your screen with:  screen -r {session_name}")
+    else:
         print(f"\nTip: start your screen session as: screen -S {session_name}")
 
 
@@ -441,21 +461,23 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 WORKFLOW OVERVIEW
 -----------------
-  1. Start your screen session:
-       screen -S fillet_run
+  1. Start monitoring — this AUTO-CREATES the screen for you (detached):
+       BenchMark go --screen fillet_run --tool Fillet --dataset calculus_100k \\
+                    --idle-timeout 0 --output ~/bench/
 
-  2. Start monitoring (returns to shell immediately):
-       BenchMark go --screen fillet_run --tool Fillet --dataset calculus_100k
+  2. Attach to that screen and run your pipeline; detach (Ctrl-A D) anytime —
+     the daemon keeps monitoring:
+       screen -r fillet_run
 
-  3. Label steps before running them in screen (optional but recommended):
+  3. (Optional) label steps before running them in screen:
        BenchMark mark "adapter_trim"
        BenchMark mark "alignment"
 
-  4. Check progress:
-       BenchMark status
+  4. List all active monitors / check progress:
+       BenchMark list
 
-  5. Stop and write CSV:
-       BenchMark stop
+  5. Finish: stop yourself, OR just kill the screen (CSV auto-writes):
+       BenchMark stop --screen fillet_run
 
   6. Combine runs from multiple tools:
        BenchMark merge fillet.csv kraken2.csv megan7.csv -o comparison.csv
@@ -518,7 +540,7 @@ EXAMPLES
     sub.required = True
 
     # ── go ──
-    p_go = sub.add_parser("go", help="Start monitoring a screen session")
+    p_go = sub.add_parser("go", help="Start monitoring (auto-creates the screen if it isn't running)")
     p_go.add_argument("--screen", "-s", metavar="NAME",
                       help="Screen session name (auto-detected if only one active)")
     p_go.add_argument("--tool", "-t", required=True, metavar="NAME",
@@ -531,8 +553,8 @@ EXAMPLES
                       help="Free-text notes (e.g. database version, parameters)")
     p_go.add_argument("--idle-timeout", type=float, default=30, metavar="MINUTES",
                       help="Exit after N minutes of continuous inactivity (0=never, default 30)")
-    p_go.add_argument("--orphan-timeout", type=float, default=15, metavar="MINUTES",
-                      help="Exit after screen session gone for N minutes (0=never, default 15)")
+    p_go.add_argument("--orphan-timeout", type=float, default=3, metavar="MINUTES",
+                      help="Exit + auto-write CSV this long after the screen is killed (0=never, default 3)")
     p_go.set_defaults(func=cmd_go)
 
     # ── stop ──
@@ -543,8 +565,9 @@ EXAMPLES
                         help="Override CSV output directory")
     p_stop.set_defaults(func=cmd_stop)
 
-    # ── status ──
-    p_status = sub.add_parser("status", help="Show active monitoring sessions")
+    # ── status / list ──
+    p_status = sub.add_parser("status", aliases=["list"],
+                              help="List all active monitors (names, tool/dataset, health)")
     p_status.set_defaults(func=cmd_status)
 
     # ── mark ──
