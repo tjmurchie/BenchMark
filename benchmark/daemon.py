@@ -11,7 +11,7 @@ import os
 import signal
 import sys
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Ensure the package root is importable regardless of CWD
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,9 +21,11 @@ from benchmark.process_utils import (
     collect_snapshot,
     find_screen_pid,
     get_cpu_percent_for,
+    get_cpu_time_delta_for,
     get_descendants,
     get_system_info,
     record_cpu_baselines,
+    record_cpu_baselines_split,
 )
 from benchmark.state import StateManager
 
@@ -78,8 +80,11 @@ class MonitorDaemon:
 
         # Per-step accumulators
         self._step_wall_start: Optional[float] = None
-        self._step_cpu_user_base: float = 0.0
-        self._step_cpu_sys_base: float = 0.0
+        # CPU time is accumulated poll-by-poll (see get_cpu_time_delta_for()'s docstring for
+        # why a single before/after snapshot silently reads ~0 for this daemon's usage pattern),
+        # not captured as a start-of-step baseline the way wall/mem/disk still are.
+        self._step_cpu_accum_user: float = 0.0
+        self._step_cpu_accum_sys: float = 0.0
         self._step_disk_read_base: int = 0
         self._step_disk_write_base: int = 0
         self._step_mem_samples: List[float] = []
@@ -91,9 +96,12 @@ class MonitorDaemon:
         self._total_idle_s: float = 0.0
         self._idle_start: Optional[float] = None
 
-        # CPU% computation baseline
+        # CPU% computation baseline (display/idle-detection only)
         self._cpu_baselines: Dict[int, float] = {}
         self._cpu_sample_time: float = 0.0
+        # Split user/system baseline, polled every iteration to feed the per-step CPU
+        # accumulator above (separate from _cpu_baselines, which only tracks a combined total).
+        self._cpu_baselines_split: Dict[int, Tuple[float, float]] = {}
 
         # State flush
         self._last_flush: float = 0.0
@@ -133,8 +141,8 @@ class MonitorDaemon:
         step_num = self.state.get_next_step_num()
         log.info(f"Step {step_num} starting")
         self._step_wall_start = now
-        self._step_cpu_user_base = snap.cpu_user_s
-        self._step_cpu_sys_base = snap.cpu_system_s
+        self._step_cpu_accum_user = 0.0
+        self._step_cpu_accum_sys = 0.0
         self._step_disk_read_base = snap.disk_read_bytes
         self._step_disk_write_base = snap.disk_write_bytes
         self._step_mem_samples = [snap.mem_rss_mb]
@@ -152,8 +160,8 @@ class MonitorDaemon:
             return
         step_num = self.state.get_current_step_num()
         wall = now - self._step_wall_start
-        cpu_user = max(0.0, snap.cpu_user_s - self._step_cpu_user_base)
-        cpu_sys = max(0.0, snap.cpu_system_s - self._step_cpu_sys_base)
+        cpu_user = self._step_cpu_accum_user
+        cpu_sys = self._step_cpu_accum_sys
         disk_r = max(0, snap.disk_read_bytes - self._step_disk_read_base) / (1024 * 1024)
         disk_w = max(0, snap.disk_write_bytes - self._step_disk_write_base) / (1024 * 1024)
         avg_mem = (
@@ -180,7 +188,9 @@ class MonitorDaemon:
         self._step_wall_start = None
         self._idle_start = now
 
-    def _update_step_accumulators(self, snap):
+    def _update_step_accumulators(self, snap, cpu_delta_user: float = 0.0, cpu_delta_sys: float = 0.0):
+        self._step_cpu_accum_user += cpu_delta_user
+        self._step_cpu_accum_sys += cpu_delta_sys
         self._step_mem_samples.append(snap.mem_rss_mb)
         if snap.mem_rss_mb > self._step_peak_mem:
             self._step_peak_mem = snap.mem_rss_mb
@@ -224,6 +234,7 @@ class MonitorDaemon:
         # Prime CPU baselines
         processes = get_descendants(self.screen_pid)
         self._cpu_baselines = record_cpu_baselines(processes)
+        self._cpu_baselines_split = record_cpu_baselines_split(processes)
         self._cpu_sample_time = time.time()
         self._last_flush = time.time()
 
@@ -262,9 +273,13 @@ class MonitorDaemon:
                 snap = collect_snapshot(processes)
                 interval = now - self._cpu_sample_time
                 cpu_pct = get_cpu_percent_for(processes, self._cpu_baselines, interval)
+                cpu_delta_user, cpu_delta_sys = get_cpu_time_delta_for(
+                    processes, self._cpu_baselines_split
+                )
 
                 # Refresh CPU baselines for next iteration
                 self._cpu_baselines = record_cpu_baselines(processes)
+                self._cpu_baselines_split = record_cpu_baselines_split(processes)
                 self._cpu_sample_time = now
 
                 # Idle/active detection with debounce
@@ -295,7 +310,7 @@ class MonitorDaemon:
 
                 # Update running accumulators during active step
                 if not self._is_idle:
-                    self._update_step_accumulators(snap)
+                    self._update_step_accumulators(snap, cpu_delta_user, cpu_delta_sys)
 
                 # Handle manual mark request (SIGUSR1)
                 if self._mark_requested:

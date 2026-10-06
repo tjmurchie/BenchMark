@@ -347,5 +347,85 @@ class TestProcessUtils(unittest.TestCase):
         self.assertGreater(snap.cpu_user_s, 0)
 
 
+# ── CPU-time accumulation regression (daemon step lifecycle) ───────────────
+#
+# Real-world bug this covers: BenchMark's primary documented usage pattern is
+# "BenchMark mark 'step'; run one command to completion; BenchMark mark 'next step'".
+# The daemon's old _close_step() computed CPU time as a single before/after snapshot
+# diff (collect_snapshot() at step-start vs. collect_snapshot() at step-end) -- but
+# collect_snapshot() only sums CPU time across processes that are CURRENTLY ALIVE at
+# the instant it's called. By the time a step's closing mark fires, the step's own
+# dominant work process has already exited (that's WHY the mark fires -- the shell
+# went idle / the next command started), so the end-of-step snapshot never includes
+# it, and the recorded cpu_total_s silently read ~0 regardless of how much real CPU
+# the process used. Confirmed live on a real multi-day production blastn run (every
+# completed step read 0.0-5.1s of CPU time despite using up to 99 threads for days).
+# Fixed by accumulating per-poll deltas (get_cpu_time_delta_for) into a running total
+# throughout the step instead of diffing two point-in-time snapshots.
+
+class TestDaemonCpuAccumulation(unittest.TestCase):
+
+    def test_step_lifecycle_captures_cpu_after_process_exits(self):
+        """The exact bug scenario: burn real CPU in a child process, let it fully exit,
+        THEN close the step -- recorded cpu_total_s must still reflect the real CPU used,
+        not ~0."""
+        from benchmark.process_utils import HAS_PSUTIL
+        if not HAS_PSUTIL:
+            self.skipTest("psutil not installed")
+        import subprocess
+        import psutil as _psutil
+        from benchmark.daemon import MonitorDaemon
+        from benchmark.process_utils import (
+            collect_snapshot, get_cpu_time_delta_for, record_cpu_baselines_split,
+        )
+
+        tmpdir = tempfile.mkdtemp()
+        state = StateManager(tmpdir)
+        state.init(
+            session_name="test_cpu_accum", tool_name="TestTool", dataset="sim",
+            output_dir=tmpdir, notes="", system_info={},
+        )
+        d = MonitorDaemon(session_name="test_cpu_accum", state=state)
+
+        this_proc = _psutil.Process(os.getpid())
+        processes = [this_proc] + this_proc.children(recursive=True)
+        snap0 = collect_snapshot(processes)
+        now = time.time()
+        d._begin_step(now, snap0)
+
+        # Real, measurable CPU burn in a short-lived child -- not mocked.
+        burner = subprocess.Popen(
+            [sys.executable, "-c",
+             "import time\nend = time.time() + 1.2\nx = 0\n"
+             "while time.time() < end:\n    x += 1\n"],
+        )
+        baseline = record_cpu_baselines_split(processes)
+        deadline = time.time() + 2.0
+        while burner.poll() is None and time.time() < deadline:
+            time.sleep(0.2)
+            processes = [this_proc] + this_proc.children(recursive=True)
+            du, ds = get_cpu_time_delta_for(processes, baseline)
+            d._update_step_accumulators(collect_snapshot(processes), du, ds)
+            baseline = record_cpu_baselines_split(processes)
+        burner.wait(timeout=5)
+
+        # Close the step only AFTER the burner has fully exited -- collect_snapshot() here
+        # will NOT see it anymore, exactly reproducing the real driver's mark-after-command
+        # -finishes pattern.
+        processes = [this_proc] + this_proc.children(recursive=True)
+        final_snap = collect_snapshot(processes)
+        self.assertNotIn(burner.pid, final_snap.pids, "sanity check: burner should be gone")
+        d._close_step(time.time(), final_snap)
+
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertGreater(
+            steps[0]["cpu_total_s"], 0.3,
+            f"cpu_total_s={steps[0]['cpu_total_s']} should reflect the ~1.2s real CPU burn "
+            "even though the burner process had already exited before the step was closed "
+            "-- this is the exact failure mode of the original before/after-snapshot bug."
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

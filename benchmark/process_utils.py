@@ -155,6 +155,64 @@ def record_cpu_baselines(processes) -> Dict[int, float]:
     return result
 
 
+def record_cpu_baselines_split(processes) -> Dict[int, Tuple[float, float]]:
+    """Return {pid: (cumulative_user_s, cumulative_system_s)} for all non-shell processes.
+
+    Split-field counterpart to record_cpu_baselines(), used by get_cpu_time_delta_for() to
+    accumulate real per-step CPU-seconds poll-by-poll (see that function's docstring for why
+    a single before/after snapshot is not sufficient here).
+    """
+    result: Dict[int, Tuple[float, float]] = {}
+    if not HAS_PSUTIL:
+        return result
+    for p in processes:
+        try:
+            if p.name() in SHELL_NAMES or p.name() in SCREEN_OVERHEAD:
+                continue
+            cpu = p.cpu_times()
+            result[p.pid] = (cpu.user, cpu.system)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return result
+
+
+def get_cpu_time_delta_for(
+    processes, prev_times: Dict[int, Tuple[float, float]]
+) -> Tuple[float, float]:
+    """Return (sum_user_delta_s, sum_system_delta_s) across non-shell processes since prev_times.
+
+    Intended to be called once per poll and summed into a running per-step accumulator (the
+    same pattern already used for peak memory / thread count), NOT as a single start-of-step
+    vs. end-of-step snapshot diff. A step whose dominant process starts and fully exits before
+    the step boundary is detected (the common "mark a step, run one command to completion, mark
+    the next step" pattern) has already exited by the time any end-of-step snapshot is taken --
+    collect_snapshot() only sees whatever is alive AT THAT INSTANT, so a before/after delta on
+    snap.cpu_user_s/cpu_system_s silently reads ~0 for the entire step regardless of how much
+    real CPU time the process actually used. Accumulating a delta every ~1s poll while the
+    process is still alive avoids this: each poll's delta is captured before the process can
+    exit out from under it, so only at most one poll-interval's worth of its final CPU usage
+    (negligible, consistent with this tool's own documented per-step overhead) is ever at risk
+    of being missed, instead of the entire step.
+    """
+    user_total = 0.0
+    sys_total = 0.0
+    if not HAS_PSUTIL:
+        return (0.0, 0.0)
+    for p in processes:
+        try:
+            name = p.name()
+            if name in SHELL_NAMES or name in SCREEN_OVERHEAD:
+                continue
+            cpu = p.cpu_times()
+            if p.pid in prev_times:
+                prev_user, prev_sys = prev_times[p.pid]
+                user_total += max(0.0, cpu.user - prev_user)
+                sys_total += max(0.0, cpu.system - prev_sys)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return (user_total, sys_total)
+
+
 def get_system_info() -> dict:
     """Collect static system information for reproducibility."""
     info: dict = {}
