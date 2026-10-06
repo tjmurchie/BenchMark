@@ -427,5 +427,133 @@ class TestDaemonCpuAccumulation(unittest.TestCase):
         )
 
 
+# ── Step-fragmentation regression tests ─────────────────────────────────
+# Real-world bug: a marked step (e.g. `BenchMark mark "blast"` before a long BLASTn-vs-NT
+# job) has a transient CPU dip below IDLE_CPU_THRESH during an I/O-bound phase. The old
+# idle/active auto-detection unconditionally closed the step on the dip and opened a new
+# one when activity resumed -- but the pending-label file was already consumed when the
+# marked step began, so the reopened step fell back to a generic step_NN name. One logical
+# step's wall/CPU got silently fragmented across several anonymously-labeled records.
+# Confirmed live on a real multi-day production blastn run (one step split into 4 records,
+# 3 of them generically named). Fixed by only closing a step on auto-idle-detection when it
+# was NOT explicitly marked; a marked step's transient dip now just pauses accumulation and
+# the step stays open until a real mark (or shutdown) closes it.
+
+class TestDaemonStepFragmentation(unittest.TestCase):
+
+    def _fresh_daemon(self, session_name):
+        from benchmark.daemon import MonitorDaemon
+        tmpdir = tempfile.mkdtemp()
+        state = StateManager(tmpdir)
+        state.init(
+            session_name=session_name, tool_name="TestTool", dataset="sim",
+            output_dir=tmpdir, notes="", system_info={},
+        )
+        return MonitorDaemon(session_name=session_name, state=state), state
+
+    @staticmethod
+    def _snap(mem=100.0, threads=4, procs=1, disk_r=0, disk_w=0, is_idle=False):
+        from benchmark.process_utils import ProcessSnapshot
+        return ProcessSnapshot(
+            timestamp=time.time(), mem_rss_mb=mem, num_threads=threads,
+            num_processes=procs, disk_read_bytes=disk_r, disk_write_bytes=disk_w,
+            is_idle=is_idle,
+        )
+
+    def _drive_active_transition(self, d, state, start_now):
+        """Two calls spaced past ACTIVE_DEBOUNCE_S, currently_idle=False both times."""
+        d._update_idle_active_state(start_now, self._snap(is_idle=False), currently_idle=False)
+        d._update_idle_active_state(start_now + 0.6, self._snap(is_idle=False), currently_idle=False)
+
+    def _drive_idle_transition(self, d, state, start_now):
+        """Two calls spaced past IDLE_DEBOUNCE_S, currently_idle=True both times."""
+        d._update_idle_active_state(start_now, self._snap(is_idle=True), currently_idle=True)
+        d._update_idle_active_state(start_now + 3.1, self._snap(is_idle=True), currently_idle=True)
+
+    def test_marked_step_survives_transient_idle_dip(self):
+        d, state = self._fresh_daemon("test_marked_survives")
+        state.set_pending_label("blast_step")
+
+        self._drive_active_transition(d, state, 1000.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["step_name"], "blast_step")
+        self.assertTrue(d._step_is_marked)
+
+        # Transient idle dip -- must NOT close the step.
+        self._drive_idle_transition(d, state, 1010.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1, "idle dip must not fragment a marked step")
+        self.assertEqual(steps[0]["status"], "active")
+        self.assertIsNone(steps[0]["end_time"])
+
+        # Activity resumes -- must NOT open a second step.
+        self._drive_active_transition(d, state, 1015.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1, "resuming activity must not open a spurious new step")
+        self.assertEqual(steps[0]["step_name"], "blast_step")
+
+        # The step finally ends via a real mark for the next step.
+        state.set_pending_label("next_step")
+        d._apply_mark(1020.0, self._snap())
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["status"], "done")
+        # Step actually opened at 1000.6 (ACTIVE_DEBOUNCE_S after the 1000.0 burst began),
+        # not 1000.0 -- wall time spans from there to the 1020.0 mark, dip included.
+        self.assertAlmostEqual(steps[0]["wall_time_s"], 19.4, delta=0.1)
+
+        self._drive_active_transition(d, state, 1021.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(steps[1]["step_name"], "next_step")
+
+    def test_unmarked_step_still_fragments_on_idle_dip(self):
+        """Legacy auto-detect behavior (no BenchMark mark ever used) is unchanged: each
+        idle->active transition is still treated as a genuinely new command/step."""
+        d, state = self._fresh_daemon("test_unmarked_fragments")
+
+        self._drive_active_transition(d, state, 2000.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["step_name"], "step_01")
+        self.assertFalse(d._step_is_marked)
+
+        self._drive_idle_transition(d, state, 2010.0)
+        steps = state.data["steps"]
+        self.assertEqual(steps[0]["status"], "done", "unmarked step should still close on idle")
+
+        self._drive_active_transition(d, state, 2015.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 2, "unmarked usage should still open a new step")
+        self.assertEqual(steps[1]["step_name"], "step_02")
+
+    def test_apply_mark_during_idle_dip_closes_paused_step(self):
+        """A new `BenchMark mark` arriving exactly during a marked step's transient pause
+        (_is_idle=True but the step is still open) must still close the old step out --
+        otherwise the new label is never picked up and the next activity burst silently
+        keeps extending the OLD step instead."""
+        d, state = self._fresh_daemon("test_mark_during_pause")
+        state.set_pending_label("step_a")
+        self._drive_active_transition(d, state, 3000.0)
+        self._drive_idle_transition(d, state, 3010.0)
+        self.assertTrue(d._is_idle)
+        self.assertIsNotNone(d._step_wall_start, "step should still be open, just paused")
+
+        state.set_pending_label("step_b")
+        d._apply_mark(3010.0, self._snap())
+
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["step_name"], "step_a")
+        self.assertEqual(steps[0]["status"], "done")
+        self.assertIsNone(d._step_wall_start)
+
+        self._drive_active_transition(d, state, 3011.0)
+        steps = state.data["steps"]
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(steps[1]["step_name"], "step_b")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

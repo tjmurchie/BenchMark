@@ -80,6 +80,11 @@ class MonitorDaemon:
 
         # Per-step accumulators
         self._step_wall_start: Optional[float] = None
+        # True if the currently-open step's name came from a real `BenchMark mark` label
+        # rather than the generic step_NN fallback. A transient idle dip (e.g. a large
+        # BLAST job's brief I/O-wait phase) must not fragment a marked step into multiple
+        # anonymous step_NN records -- see the idle-transition handling below.
+        self._step_is_marked: bool = False
         # CPU time is accumulated poll-by-poll (see get_cpu_time_delta_for()'s docstring for
         # why a single before/after snapshot silently reads ~0 for this daemon's usage pattern),
         # not captured as a start-of-step baseline the way wall/mem/disk still are.
@@ -139,6 +144,10 @@ class MonitorDaemon:
 
     def _begin_step(self, now: float, snap):
         step_num = self.state.get_next_step_num()
+        # Peek (non-destructively) before state.start_step() consumes it, so the idle/active
+        # transition handler knows whether this step has a real mark-driven name or is a
+        # generic auto-detected one.
+        self._step_is_marked = self.state.check_pending_label() is not None
         log.info(f"Step {step_num} starting")
         self._step_wall_start = now
         self._step_cpu_accum_user = 0.0
@@ -202,14 +211,71 @@ class MonitorDaemon:
     # ── Manual mark ──────────────────────────────────────────────────
 
     def _apply_mark(self, now: float, snap):
-        """Force a step boundary (from SIGUSR1 or pending mark file)."""
-        if not self._is_idle and self._step_wall_start is not None:
+        """Force a step boundary (from SIGUSR1 or pending mark file).
+
+        Checks `_step_wall_start` rather than `_is_idle` to decide whether there's a step
+        to close: a marked step that's mid-transient-idle-dip (see
+        `_update_idle_active_state`) still has `_step_wall_start` set even though
+        `_is_idle` is currently True, and a mark arriving in that exact window must still
+        close it out -- otherwise the new mark's label would never get picked up and the
+        next real activity burst would silently keep extending the OLD step instead.
+        """
+        if self._step_wall_start is not None:
             self._close_step(now, snap)
-            self._is_idle = True
-            self._idle_candidate_since = None
-            self._active_candidate_since = None
+        self._is_idle = True
+        self._idle_candidate_since = None
+        self._active_candidate_since = None
         # Next step will pick up the pending label from the mark file
         log.info("Step boundary marked manually")
+
+    # ── Idle/active auto-detection ──────────────────────────────────────
+
+    def _update_idle_active_state(self, now: float, snap, currently_idle: bool):
+        """Debounced idle<->active transitions, with step begin/close side effects.
+
+        For a step with no explicit `BenchMark mark` behind it (generic auto-detected
+        step, e.g. a bare interactive screen with no marks used at all), an idle->active
+        transition legitimately means "a new command started" and should open a new step
+        -- this is the tool's original auto-detect behavior, unchanged here.
+
+        For a step that WAS explicitly marked, a transient dip below the CPU threshold
+        (e.g. a large BLAST job's brief I/O-wait phase) is not a real step boundary --
+        closing and reopening it would both lose the real step name (the pending-label
+        file was already consumed when the marked step began, so the reopened step would
+        fall back to a generic step_NN label) and fragment one logical step's wall/CPU
+        totals across several records. So for a marked step, idle detection only pauses
+        accumulation (handled by the caller skipping _update_step_accumulators while
+        _is_idle is True) -- it does not close the step at all; the step stays open and
+        simply resumes when activity returns.
+        """
+        if self._is_idle and not currently_idle:
+            if self._active_candidate_since is None:
+                self._active_candidate_since = now
+            elif now - self._active_candidate_since >= ACTIVE_DEBOUNCE_S:
+                self._is_idle = False
+                self._ever_active = True   # first real command has run
+                if self._step_wall_start is None:
+                    # No step currently open -- either session start, or the previous
+                    # step was really closed (a genuine mark, not just an idle dip).
+                    self._begin_step(now, snap)
+                # else: resuming an already-open marked step after a transient dip --
+                # accumulators/_step_wall_start are untouched, nothing to do.
+                self._active_candidate_since = None
+                self._idle_candidate_since = None
+        else:
+            self._active_candidate_since = None
+
+        if not self._is_idle and currently_idle:
+            if self._idle_candidate_since is None:
+                self._idle_candidate_since = now
+            elif now - self._idle_candidate_since >= IDLE_DEBOUNCE_S:
+                if not self._step_is_marked:
+                    self._close_step(now, snap)
+                self._is_idle = True
+                self._idle_candidate_since = None
+                self._active_candidate_since = None
+        elif not self._is_idle:
+            self._idle_candidate_since = None
 
     # ── Main loop ─────────────────────────────────────────────────────
 
@@ -284,29 +350,7 @@ class MonitorDaemon:
 
                 # Idle/active detection with debounce
                 currently_idle = snap.is_idle or cpu_pct < IDLE_CPU_THRESH
-
-                if self._is_idle and not currently_idle:
-                    if self._active_candidate_since is None:
-                        self._active_candidate_since = now
-                    elif now - self._active_candidate_since >= ACTIVE_DEBOUNCE_S:
-                        self._is_idle = False
-                        self._ever_active = True   # first real command has run
-                        self._begin_step(now, snap)
-                        self._active_candidate_since = None
-                        self._idle_candidate_since = None
-                else:
-                    self._active_candidate_since = None
-
-                if not self._is_idle and currently_idle:
-                    if self._idle_candidate_since is None:
-                        self._idle_candidate_since = now
-                    elif now - self._idle_candidate_since >= IDLE_DEBOUNCE_S:
-                        self._close_step(now, snap)
-                        self._is_idle = True
-                        self._idle_candidate_since = None
-                        self._active_candidate_since = None
-                elif not self._is_idle:
-                    self._idle_candidate_since = None
+                self._update_idle_active_state(now, snap, currently_idle)
 
                 # Update running accumulators during active step
                 if not self._is_idle:
@@ -347,7 +391,10 @@ class MonitorDaemon:
             time.sleep(sleep_for)
 
         # ── Shutdown ──
-        if not self._is_idle and self._step_wall_start is not None:
+        # Checks _step_wall_start alone (not _is_idle too): a marked step mid-transient-
+        # idle-dip has _is_idle=True but is still open and must still be closed out here,
+        # same reasoning as _apply_mark above.
+        if self._step_wall_start is not None:
             processes = get_descendants(self.screen_pid) if self.screen_pid else []
             snap = collect_snapshot(processes)
             self._close_step(time.time(), snap)
